@@ -71,7 +71,14 @@ test('Diff display options preserve exact bytes in exported patch, including EOF
   assert.equal(applyPatch(before, result.patch), after)
   assert.equal(compareTexts('same\n', 'same').identical, false)
   assert.equal(applyPatch('same\n', compareTexts('same\n', 'same').patch), 'same')
-  assert.throws(() => compareTexts('a'.repeat(4_000_001), ''), /4 million/)
+})
+
+test('Diff accepts large documents and exports an applicable patch', () => {
+  const large = 'a'.repeat(4_000_001) + '\n'
+  const result = compareTexts(large + 'before\n', large + 'after\n')
+  assert.equal(result.added, 1)
+  assert.equal(result.removed, 1)
+  assert.equal(applyPatch(large + 'before\n', result.patch), large + 'after\n')
 })
 
 test('Copied formatters format JSON, locate syntax errors and preserve HTML preformatted content', () => {

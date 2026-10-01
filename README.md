@@ -36,9 +36,9 @@ Web Workers, and browser crypto require the appropriate browser context.
 | Tool | What it does |
 | --- | --- |
 | JWT decoder | Decodes Base64URL header and payload, displays time claims, accepts a Bearer prefix. Does **not** verify signatures. Encrypted JWE tokens are identified but not decrypted. |
-| Text & file diff | Compares pasted text or UTF-8 files, shows additions/removals and line numbers, exports an exact unified patch. Optional edge-whitespace and CRLF normalization apply to the display; exported patches preserve the original inputs. |
+| Text & file diff | Compares pasted text or UTF-8 files across the full workspace, shows additions/removals and line numbers, exports an exact unified patch. Optional edge-whitespace and CRLF normalization apply to the display; exported patches preserve the original inputs. |
 | JSON formatter | Formats with 2/4/8 spaces, minifies, and reports syntax-error line and column. |
-| Markdown reader | Sanitized GitHub-flavored Markdown with syntax-highlighted code, tables, tasks, heading anchors, and lazy-loaded Mermaid diagrams. |
+| Markdown reader | Sanitized GitHub-flavored Markdown with syntax-highlighted code, tables, tasks, heading anchors, and lazy-loaded Mermaid diagrams. Opens at full workspace width and height, with optional split view for editing. |
 | HTML / XML formatters | Formats and minifies markup, shows warnings for unbalanced tags, and supports original source view. |
 | Base64 converter | Encodes/decodes UTF-8 text including emoji, with optional Base64URL alphabet. |
 | URL encoder | Uses URL-component encoding and decoding. Spaces encode as `%20`; decoding does not interpret `+` as a space. |
@@ -59,9 +59,9 @@ Automatic remote image/resource loading is removed from Markdown previews;
 embedded Base64 bitmap images are allowed. Clicking a document's external link
 can still open that site in a new tab.
 
-- Text file import: up to 5 MB per file; choose UTF-8 text. Binary comparisons are not supported.
-- Formatting, Markdown preview, and encoding: up to 2 million characters.
-- Diff: up to 4 million combined characters. A worker and computation limits protect the UI from expensive comparisons. The preview shows at most 10,000 rows; the full patch is downloadable when generation completes within the limit.
+- Text file import: Markdown and diff have no fixed size limit; other tools accept up to 5 MB per file. Choose UTF-8 text. Binary comparisons are not supported.
+- Formatting and encoding: up to 2 million characters. Markdown preview accepts larger documents; available browser memory determines the practical limit.
+- Diff: no fixed character limit. A worker and computation limits protect the UI from expensive comparisons. The preview shows at most 10,000 rows; the full patch is downloadable when generation completes within the computation limit. Available browser memory determines the practical input size limit.
 - Hashing: up to 100 MB per binary file; file hashing reads the whole file into memory.
 - Markup formatting is a tolerant indenter, not a full HTML/XML parser. Minification removes comments and may alter significant whitespace. Check output before using it in whitespace-sensitive documents.
 - JSON formatting uses `JSON.parse`, so numbers beyond JavaScript's safe integer range can lose precision; use Original view to preserve exact source.

@@ -1,7 +1,6 @@
 import { diffLines, createTwoFilesPatch } from 'diff'
 
 export function compareTexts(before, after, options = {}) {
-  if (before.length + after.length > 4_000_000) throw new Error('Compare up to 4 million characters combined. Split larger files into smaller sections.')
   const parts = diffLines(before, after, { ignoreWhitespace: options.ignoreWhitespace, stripTrailingCr: options.ignoreLineEndings, timeout: 3000, maxEditLength: 20_000 })
   if (!parts) throw new Error('These files are too different to compare within the time limit. Try a smaller section.')
   let oldLine = 1
