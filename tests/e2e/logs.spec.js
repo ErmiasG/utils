@@ -260,6 +260,57 @@ test('Large plain-text blocks search beyond their preview without splitting into
   await expect(page.getByRole('button', { name: 'Inspect lines 1–12001', exact: true })).toBeVisible()
 })
 
+test('Plain-text timestamps split entries while preserving stack traces, search, context, and export', async ({ page }) => {
+  await page.goto('/?tool=logs')
+  const trace = [
+    '2026-10-03T12:34:56.123Z ERROR failed 👋',
+    '\tat org.example.Client.run(Client.java:1)', '',
+    'Caused by: connection refused',
+    '\tat io.hops.hopsworks.api.Service.run(Service.java:50)',
+    'retry scheduled for 2026-10-03T12:34:57Z',
+  ].join('\r\n')
+  const source = 'Starting service\r\n' + trace + '\r\n[2026-10-03 12:34:58,789] INFO recovered\r\nextra details\r\n{"msg":"structured entry"}'
+  await page.locator('.log-tool input[type=file]').setInputFiles({ name: 'timestamped.log', mimeType: 'text/plain', buffer: Buffer.from(source) })
+  await expect(page.getByText('4 matching', { exact: true })).toBeVisible()
+  await expect(page.locator('.log-result tbody tr')).toHaveCount(4)
+  await expect(page.locator('.log-result tbody tr').nth(1).locator('td').nth(1)).toHaveText('2026-10-03T12:34:56.123Z')
+  await expect(page.locator('.log-result tbody tr').nth(2).locator('td').nth(1)).toHaveText('2026-10-03 12:34:58,789')
+  await page.getByLabel('Format', { exact: true }).selectOption('text')
+  await expect(page.getByText('3 matching', { exact: true })).toBeVisible()
+  await page.getByLabel('Search', { exact: true }).fill('connection refused')
+  await expect(page.getByText('1 matching', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Inspect lines 2–7', exact: true }).click()
+  expect(await page.getByLabel('Entry details').textContent()).toBe(trace)
+  const downloadPromise = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Save entry', exact: true }).click()
+  const download = await downloadPromise
+  expect(download.suggestedFilename()).toBe('log-lines-2-7.txt')
+  expect(await readFile(await download.path(), 'utf8')).toBe(trace + '\r')
+  await page.getByRole('button', { name: 'Stack focus', exact: true }).click()
+  await expect(page.getByLabel('Focused stack trace').locator('mark')).toHaveText(['io.hops.hopsworks.api.Service.run'])
+  await page.getByRole('button', { name: 'Show context', exact: true }).click()
+  await expect(page.getByLabel('Surrounding context').locator('tbody tr')).toHaveCount(4)
+  await expect(page.getByLabel('Surrounding context').getByRole('button', { name: 'Inspect lines 8–9', exact: true })).toContainText('recovered extra details')
+  await page.getByRole('button', { name: 'Jump to original position', exact: true }).click()
+  await expect(page.getByText('4 matching', { exact: true })).toBeVisible()
+  await expect(page.locator('.log-result').getByRole('button', { name: 'Inspect lines 2–7', exact: true })).toHaveAttribute('aria-pressed', 'true')
+})
+
+test('Timestamped text logs paginate separately even when timestamps repeat', async ({ page }) => {
+  await page.goto('/?tool=logs')
+  const source = Array.from({ length: 105 }, (_, id) => `2026-10-03 12:34:56 INFO message ${id}\ncontinuation ${id}`).join('\n')
+  await page.locator('.log-tool input[type=file]').setInputFiles({ name: 'text-pages.log', mimeType: 'text/plain', buffer: Buffer.from(source) })
+  await expect(page.getByText('105 matching', { exact: true })).toBeVisible()
+  await expect(page.locator('.log-result tbody tr')).toHaveCount(100)
+  await page.getByRole('button', { name: 'Last', exact: true }).click()
+  await expect(page.locator('.log-result tbody tr')).toHaveCount(5)
+  await expect(page.getByRole('button', { name: 'Inspect lines 209–210', exact: true })).toContainText('message 104 continuation 104')
+  await page.getByLabel('Search', { exact: true }).fill('continuation 104')
+  await expect(page.getByText('1 matching', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Inspect lines 209–210', exact: true }).click()
+  expect(await page.getByLabel('Entry details').textContent()).toBe('2026-10-03 12:34:56 INFO message 104\ncontinuation 104')
+})
+
 test('Filter dropdowns show detected values and accept custom input', async ({ page }) => {
   await page.goto('/?tool=logs')
   await page.getByRole('button', { name: 'Load example', exact: true }).click()

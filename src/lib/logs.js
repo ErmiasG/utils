@@ -12,17 +12,30 @@ const aliases = {
   threadId: ['threadid', 'thread_id', 'thread.id', 'tid'],
 }
 
+// Only a timestamp at the start of a physical line begins a text entry. Keep
+// its original spelling; timezone-less dates and times need no interpretation.
+const clockTimestamp = String.raw`(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:[.,]\d{1,9})?(?:[ \t]?(?:Z|[+-](?:[01]\d|2[0-3])(?::?[0-5]\d)?))?`
+const calendarDate = String.raw`(?:\d{4}[-/](?:0[1-9]|1[0-2])[-/](?:0[1-9]|[12]\d|3[01])|(?:0[1-9]|[12]\d|3[01])[-/](?:0[1-9]|1[0-2])[-/]\d{4})`
+const syslogDate = String.raw`(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[ \t]+(?:0?[1-9]|[12]\d|3[01])[ \t]+`
+const textTimestamp = new RegExp(String.raw`^[ \t\uFEFF]*\[?((?:${calendarDate}[T \t]|${syslogDate})?${clockTimestamp})(?=$|[ \t\r\n\]|])`, 'i')
+
+function textLogEntry(raw, truncated = false) {
+  const timestamp = textTimestamp.exec(raw)?.[1]
+  return { raw, format: 'text', value: null, truncated, ...(timestamp ? { timestamp } : {}) }
+}
+
 export function parseLogLine(raw, truncated = false) {
-  if (truncated) return { raw, format: 'text', value: null, truncated: true }
+  const text = textLogEntry(raw, truncated)
+  if (truncated || text.timestamp) return text
   try {
     const value = JSON.parse(raw.replace(/^\uFEFF/, ''))
-    if (value === null || typeof value !== 'object') return { raw, format: 'text', value: null, truncated: false }
+    if (value === null || typeof value !== 'object') return text
     return { raw, format: 'json', value, truncated: false }
   }
   catch {
     const trimmed = raw.trimStart()
     const arrayLike = trimmed.startsWith('[') && /^(?:\]|\{|\[|"|-?\d|true\b|false\b|null\b)/.test(trimmed.slice(1).trimStart())
-    return { raw, format: trimmed.startsWith('{') || arrayLike ? 'invalid' : 'text', value: null, truncated: false }
+    return { ...text, format: trimmed.startsWith('{') || arrayLike ? 'invalid' : 'text' }
   }
 }
 
@@ -33,6 +46,7 @@ export function logFields(entry) {
 export function logValue(entry, role, field = '') {
   const fields = logFields(entry)
   if (field) return fields.includes(field) ? entry.value[field] : undefined
+  if (entry.format === 'text' && role === 'timestamp') return entry.timestamp
   for (const alias of aliases[role] || []) {
     const key = fields.find((key) => key.toLowerCase() === alias)
     if (key !== undefined && entry.value[key] != null) return entry.value[key]
@@ -82,7 +96,7 @@ export function matchesLog(entry, filters = {}, mapping = {}) {
 // Compact, growable arrays keep only byte positions and physical line numbers,
 // not copies of the file or parsed entries. Float64 offsets also work above 4 GB.
 export class LogIndex {
-  constructor(width = 3) { this.width = width; this.blocks = []; this.length = 0; this.blockRows = 32768 }
+  constructor(width = 3, blockRows = 32768) { this.width = width; this.blocks = []; this.length = 0; this.blockRows = blockRows }
   push(...values) {
     const block = Math.floor(this.length / this.blockRows)
     if (!this.blocks[block]) this.blocks.push(new Float64Array(this.blockRows * this.width))
@@ -137,7 +151,8 @@ export async function walkLogLines(file, visit, { chunkBytes = LOG_CHUNK_BYTES, 
 
 // Text blocks carry only source bounds, so even a block spanning the whole file
 // does not accumulate in memory. The predicate checks every physical line,
-// including lines beyond the detail preview limit. JSON entries remain separate.
+// including lines beyond the detail preview limit. Timestamp prefixes start new
+// text blocks; continuation lines stay attached. JSON entries remain separate.
 export async function walkLogEntries(file, visit, { shouldMatch, ...options } = {}) {
   let text = null
   const flush = () => {
@@ -148,7 +163,8 @@ export async function walkLogEntries(file, visit, { shouldMatch, ...options } = 
   const done = await walkLogLines(file, (entry) => {
     const matches = shouldMatch ? shouldMatch(entry) : false
     if (entry.format === 'text') {
-      if (!text) text = { start: entry.start, end: entry.end, line: entry.line, endLine: entry.line, format: 'text', value: null, truncated: entry.truncated, matches }
+      if (entry.timestamp) flush()
+      if (!text) text = { start: entry.start, end: entry.end, line: entry.line, endLine: entry.line, format: 'text', value: null, timestamp: entry.timestamp, truncated: entry.truncated, matches }
       else {
         text.end = entry.end; text.endLine = entry.line
         text.truncated ||= entry.truncated; text.matches ||= matches
@@ -167,7 +183,7 @@ export async function readLogEntry(file, index, id) {
   const [start, end, line, endLine = line] = index.get(id)
   const raw = new TextDecoder().decode(await file.slice(start, Math.min(end, start + MAX_LOG_LINE_BYTES)).arrayBuffer()).replace(/\r$/, '')
   const truncated = end - start > MAX_LOG_LINE_BYTES
-  const parsed = endLine > line ? { raw, format: 'text', value: null, truncated } : parseLogLine(raw, truncated)
+  const parsed = endLine > line ? textLogEntry(raw, truncated) : parseLogLine(raw, truncated)
   return { id, start, end, line, endLine, ...parsed }
 }
 

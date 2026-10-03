@@ -42,7 +42,7 @@ function LogEntriesTable({ rows, selectedId, onInspect, onFollowThread, busy = f
   </table>
 }
 
-export default function LogTool({ notify }) {
+export default function LogTool({ notify, incomingFile }) {
   const worker = useRef(null), fileInput = useRef(null), source = useRef(null)
   const sequence = useRef(0), queryRequest = useRef(0), detailRequest = useRef(0)
   const contextRequest = useRef(0), pendingJump = useRef(null)
@@ -95,6 +95,8 @@ export default function LogTool({ notify }) {
       task.postMessage({ type: 'load', file, request })
     } catch (error) { setError(error.message); setBusy('') }
   }
+
+  useEffect(() => { if (incomingFile) open(incomingFile.file) }, [incomingFile])
 
   // Each change cancels an older scan in the worker; only the latest request
   // can update the preview. File objects stay outside React state.
@@ -153,7 +155,7 @@ export default function LogTool({ notify }) {
   const updateFilter = (key, value) => setFilters((previous) => ({ ...previous, [key]: value }))
   const pages = result ? Math.max(1, Math.ceil(result.total / LOG_PAGE_SIZE)) : 1
   return <div className={`log-tool${dragging ? ' dragging' : ''}`} onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDragging(true) } }} onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragging(false) }} onDrop={(e) => { e.preventDefault(); setDragging(false); open(e.dataTransfer.files[0]) }}>
-    <div className="tool-actions"><span className="hint">Open or drop a UTF-8 log file. JSON lines stay separate; consecutive plain text is grouped.</span><div className="actions">
+    <div className="tool-actions"><span className="hint">Open or drop a UTF-8 log file. Plain text is split at timestamps, with continuation lines grouped; JSON lines stay separate.</span><div className="actions">
       <Action icon="upload" primary onClick={() => fileInput.current?.click()}>Open file</Action>
       <Action onClick={() => setPasteOpen(!pasteOpen)}>Paste logs</Action>
       <Action onClick={() => open(new File([example], 'example.log', { type: 'text/plain' }))}>Load example</Action>

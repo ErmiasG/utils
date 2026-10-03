@@ -152,6 +152,74 @@ test('Plain text groups cross chunks and blank lines without merging structured 
   }
 })
 
+test('Text timestamp prefixes support common formats and preserve their original spelling', () => {
+  for (const timestamp of [
+    '2026-10-03T12:34:56Z', '2026-10-03T12:34:56.123456789+02:00',
+    '2026-10-03T12:34:56.515+0000', '2026-10-03 12:34:56,789',
+    '2026/10/03 12:34:56', '03/10/2026 12:34:56',
+    'Oct  3 12:34:56', 'Oct 03 12:34:56', '12:34:56.789',
+  ]) {
+    for (const raw of [`${timestamp} INFO ready`, `\uFEFF  [${timestamp}] ready`, timestamp]) {
+      const entry = parseLogLine(raw)
+      assert.equal(entry.format, 'text', raw)
+      assert.equal(entry.timestamp, timestamp, raw)
+      assert.equal(summarizeLogEntry(entry).timestamp, timestamp)
+      assert.deepEqual(logFields(entry), [])
+      assert.equal(entry.raw, raw)
+    }
+  }
+  for (const raw of ['retry at 2026-10-03T12:34:56Z', '2026-10-03', '2026-99-03 12:34:56', '25:34:56 ready', '12:60:56 ready', '12:34:56.1234567890 ready']) {
+    assert.equal(parseLogLine(raw).timestamp, undefined, raw)
+  }
+  assert.equal(parseLogLine('[123,broken]').format, 'invalid')
+  assert.equal(parseLogLine('[123,{"message":"structured"}]').format, 'json')
+})
+
+test('Timestamped text entries keep continuations, source bounds, and search matches across chunks', async () => {
+  const groups = [
+    ['\uFEFFStarting 👋', 'loading configuration'],
+    ['2026-10-03T12:34:56Z', '\tat org.example.Client.run(Client.java:1)', '', 'Caused by: connection refused', 'retry at 2026-10-03T12:34:57Z'],
+    ['[2026-10-03 12:34:58,789] INFO recovered'],
+    ['Oct  3 12:34:59 host ready', 'extra details'],
+    ['12:35:00 INFO finished'],
+    ['{"timestamp":"structured","msg":"json"}'],
+    ['{broken}'],
+    ['last text'],
+  ].map((lines) => lines.join('\r\n'))
+  const file = new Blob([groups.join('\r\n')])
+  for (const chunkBytes of [1, 7, 64, 2048]) {
+    const entries = [], index = new LogIndex(4)
+    await walkLogEntries(file, (entry) => { entries.push(entry); index.push(entry.start, entry.end, entry.line, entry.endLine) }, {
+      chunkBytes, shouldMatch: (entry) => matchesLog(entry, { query: 'connection refused', format: 'text' }),
+    })
+    assert.deepEqual(entries.map((entry) => [entry.line, entry.endLine, entry.format]), [
+      [1, 2, 'text'], [3, 7, 'text'], [8, 8, 'text'], [9, 10, 'text'],
+      [11, 11, 'text'], [12, 12, 'json'], [13, 13, 'invalid'], [14, 14, 'text'],
+    ])
+    assert.deepEqual(entries.map((entry) => entry.matches), [false, true, false, false, false, false, false, false])
+    const timestamps = ['', '2026-10-03T12:34:56Z', '2026-10-03 12:34:58,789', 'Oct  3 12:34:59', '12:35:00', 'structured', '', '']
+    for (let id = 0; id < entries.length; id++) {
+      const reread = await readLogEntry(file, index, id)
+      assert.equal(reread.raw, groups[id].replace(/^\uFEFF/, ''))
+      if (entries[id].format === 'text') assert.equal(entries[id].timestamp, timestamps[id] || undefined)
+      assert.equal(summarizeLogEntry(reread).timestamp, timestamps[id])
+      assert.equal(await file.slice(reread.start, reread.end).text(), groups[id].replace(/^\uFEFF/, '') + (id < entries.length - 1 ? '\r' : ''))
+      if (entries[id].format === 'text') assert.equal(entries[id].raw, undefined)
+    }
+  }
+})
+
+test('Oversized timestamped lines still begin separate entries without retaining their contents', async () => {
+  const file = new Blob(['2026-10-03T12:34:56Z ' + 'x'.repeat(200) + '\ncontinuation\n[2026-10-03T12:34:57Z] next'])
+  const entries = [], index = new LogIndex(4)
+  await walkLogEntries(file, (entry) => { entries.push(entry); index.push(entry.start, entry.end, entry.line, entry.endLine) }, { chunkBytes: 17, maxLineBytes: 64 })
+  assert.deepEqual(entries.map((entry) => [entry.line, entry.endLine, entry.timestamp, entry.truncated]), [
+    [1, 2, '2026-10-03T12:34:56Z', true], [3, 3, '2026-10-03T12:34:57Z', false],
+  ])
+  assert.equal(entries[0].raw, undefined)
+  assert.equal(summarizeLogEntry(await readLogEntry(file, index, 0)).timestamp, '2026-10-03T12:34:56Z')
+})
+
 test('Text groups do not retain their contents and match lines beyond the 8 MiB preview', async () => {
   const blob = new Blob([('text ' + 'x'.repeat(700) + '\n').repeat(12_000) + 'last marker'])
   const file = { size: blob.size, slice: (start, end) => { assert.ok(end - start <= 1024 * 1024); return blob.slice(start, end) } }
